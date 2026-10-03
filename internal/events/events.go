@@ -116,17 +116,22 @@ func (c *Consumer) Close() error { return c.reader.Close() }
 
 // ---- 消费者处理器 ----
 
-// PointsCommandHandler 积分入账指令
+// PointsCommandHandler 积分入账指令。
+// 处理失败(含暂停注入)时记录"消息回调失败", 频繁失败由 svc 侧升级为技术排查记录。
 func PointsCommandHandler(s *svc.Service, paused func() bool) func(ctx context.Context, key string, payload []byte) error {
 	return func(ctx context.Context, key string, payload []byte) error {
 		if paused != nil && paused() {
-			// 测试注入: 暂停消费以模拟"积分不到账"
+			// 测试注入: 暂停消费以模拟"积分不到账/回调持续失败"
 			time.Sleep(2 * time.Second)
-			return errPaused
+			err := errPaused
+			recordPointsCallbackFailure(ctx, s, key, payload, err)
+			return err
 		}
 		var cmd struct {
 			Command      string `json:"command"`
 			SettlementID int64  `json:"settlement_id"`
+			ResidentID   int64  `json:"resident_id"`
+			OrderID      int64  `json:"order_id"`
 		}
 		if err := json.Unmarshal(payload, &cmd); err != nil {
 			return nil // 毒消息: 跳过
@@ -134,8 +139,53 @@ func PointsCommandHandler(s *svc.Service, paused func() bool) func(ctx context.C
 		if cmd.Command != "credit" || cmd.SettlementID == 0 {
 			return nil
 		}
-		return s.CreditPointsFromCommand(ctx, cmd.SettlementID)
+		if err := s.CreditPointsFromCommand(ctx, cmd.SettlementID); err != nil {
+			var rid, oid *int64
+			if cmd.ResidentID != 0 {
+				v := cmd.ResidentID
+				rid = &v
+			}
+			if cmd.OrderID != 0 {
+				v := cmd.OrderID
+				oid = &v
+			}
+			s.RecordCallbackFailure(ctx, domain.TopicPointsCommands, "points-consumer", key, err, rid, oid)
+			return err
+		}
+		return nil
 	}
+}
+
+// recordPointsCallbackFailure paused 注入路径下从指令解析受影响居民/订单后记录失败
+func recordPointsCallbackFailure(ctx context.Context, s *svc.Service, key string, payload []byte, handleErr error) {
+	var cmd struct {
+		SettlementID int64 `json:"settlement_id"`
+		ResidentID   int64 `json:"resident_id"`
+		OrderID      int64 `json:"order_id"`
+	}
+	_ = json.Unmarshal(payload, &cmd)
+	var rid, oid *int64
+	if cmd.ResidentID != 0 {
+		v := cmd.ResidentID
+		rid = &v
+	}
+	if cmd.OrderID != 0 {
+		v := cmd.OrderID
+		oid = &v
+	}
+	// 暂停注入的指令消息未带居民/订单时, 用结算单号兜底解析
+	if rid == nil && cmd.SettlementID != 0 {
+		r, o := s.ResidentOrderBySettlement(ctx, cmd.SettlementID)
+		if r != 0 {
+			v := r
+			rid = &v
+		}
+		if o != 0 {
+			v := o
+			oid = &v
+		}
+	}
+	s.RecordCallbackFailure(ctx, domain.TopicPointsCommands, "points-consumer", key, handleErr, rid, oid)
 }
 
 var errPaused = &pausedError{}

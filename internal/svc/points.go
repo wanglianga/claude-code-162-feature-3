@@ -47,6 +47,11 @@ func (s *Service) ClaimPoints(ctx context.Context, residentID, orderID int64, no
 		result.ClaimID = claimID
 
 		idemKey := fmt.Sprintf("settlement:%d", st.ID)
+		// 与积分消费者/自动补发共用消费幂等标记: 占用后延迟消息恢复即为空操作,
+		// 不会再次推进订单或重复发送到账通知。
+		if _, err := store.TryMarkProcessed(ctx, tx, "points-consumer", idemKey); err != nil {
+			return err
+		}
 		entry, credited, err := store.CreditPoints(ctx, tx, residentID, &orderID, &st.ID,
 			st.Points, "RECYCLE_CREDIT", idemKey)
 		if err != nil {
@@ -67,10 +72,31 @@ func (s *Service) ClaimPoints(ctx context.Context, residentID, orderID int64, no
 					return err
 				}
 			}
+			// 补发明细: 居民端可查补发来源、到账时间、原订单编号
+			reissue := &domain.PointsReissue{
+				ResidentID:      residentID,
+				OrderID:         orderID,
+				SettlementID:    st.ID,
+				Points:          st.Points,
+				Reason:          domain.ReissueReasonManualReconcile,
+				Source:          domain.ReissueSourceManualReconcile,
+				OriginalOrderNo: o.OrderNo,
+				PointsEntryID:   &entry.ID,
+				IdempotencyKey:  fmt.Sprintf("reissue:settlement:%d", st.ID),
+			}
+			if err := store.CreatePointsReissue(ctx, tx, reissue); err != nil {
+				return err
+			}
 			result.Status = "RESOLVED_CREDITED"
 			result.Credited = st.Points
 			result.Balance = entry.BalanceAfter
 			result.Message = fmt.Sprintf("积分已补入账: +%d, 当前余额 %d", st.Points, entry.BalanceAfter)
+			if err := s.notify(ctx, tx, residentID, "POINTS_REISSUED",
+				fmt.Sprintf("您订单 %s 的回收积分已补发: +%d(来源:%s, 到账时间:%s)",
+					o.OrderNo, st.Points, domain.ReissueSourceManualReconcile,
+					reissue.CreditedAt.Format("2006-01-02 15:04:05"))); err != nil {
+				return err
+			}
 			return store.ResolvePointsClaim(ctx, tx, claimID, "RESOLVED_CREDITED", result.Message)
 		}
 		// 已入账
@@ -94,6 +120,11 @@ func (s *Service) PointsBalance(ctx context.Context, residentID int64) (int64, [
 	}
 	entries, err := store.ListPointsEntries(ctx, s.Store.Pool, residentID, 50)
 	return bal, entries, err
+}
+
+// ListReissues 居民查询积分补发记录(补发来源、到账时间、原订单编号)
+func (s *Service) ListReissues(ctx context.Context, residentID int64) ([]*domain.PointsReissue, error) {
+	return store.ListPointsReissuesByResident(ctx, s.Store.Pool, residentID, 100)
 }
 
 // CreditPointsFromCommand 积分消费者调用: 幂等入账 + 推进订单

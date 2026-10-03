@@ -393,6 +393,10 @@ func (s *Service) Settle(ctx context.Context, collectorID, orderID int64,
 			}
 			return err
 		}
+		// 回收员已补提交: 自动关闭"未提交结算"待处理任务(影响解除, 收益随结算生成)
+		if err := store.ResolveCollectorTasks(ctx, tx, orderID); err != nil {
+			return err
+		}
 		if err := store.AddConfirmation(ctx, tx, &domain.Confirmation{
 			OrderID: orderID, Kind: "SETTLE_CONFIRM", ActorRole: domain.RoleCollector,
 			ActorID: collectorID, Method: domain.MethodScanCode,

@@ -153,15 +153,15 @@ type createOrderReq struct {
 		Category    string  `json:"category"`
 		EstWeightKg float64 `json:"est_weight_kg"`
 	} `json:"items"`
-	Address       string   `json:"address"`
-	Lat           float64  `json:"lat"`
-	Lng           float64  `json:"lng"`
-	Floor         int      `json:"floor"`
-	HasElevator   bool     `json:"has_elevator"`
-	WindowStart   string   `json:"time_window_start"`
-	WindowEnd     string   `json:"time_window_end"`
-	Photos        []string `json:"photos"`
-	IdempotencyKey string  `json:"idempotency_key"`
+	Address        string   `json:"address"`
+	Lat            float64  `json:"lat"`
+	Lng            float64  `json:"lng"`
+	Floor          int      `json:"floor"`
+	HasElevator    bool     `json:"has_elevator"`
+	WindowStart    string   `json:"time_window_start"`
+	WindowEnd      string   `json:"time_window_end"`
+	Photos         []string `json:"photos"`
+	IdempotencyKey string   `json:"idempotency_key"`
 }
 
 func (s *Server) handleCreateOrder(w http.ResponseWriter, r *http.Request) {
@@ -378,12 +378,30 @@ func (s *Server) handlePointsBalance(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// 补发流水附带: 补发来源 / 到账时间 / 原订单编号
+	reissues, err := store.ListPointsReissuesByResident(r.Context(), s.st.Pool, u.ID, 100)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	reBySettlement := map[int64]*domain.PointsReissue{}
+	for _, ri := range reissues {
+		reBySettlement[ri.SettlementID] = ri
+	}
 	out := []map[string]any{}
 	for _, e := range entries {
-		out = append(out, map[string]any{
+		row := map[string]any{
 			"id": e.ID, "delta": e.Delta, "balance_after": e.BalanceAfter,
 			"kind": e.Kind, "order_id": e.OrderID, "created_at": e.CreatedAt,
-		})
+		}
+		if e.SettlementID != nil {
+			if ri, ok := reBySettlement[*e.SettlementID]; ok {
+				row["reissue_source"] = ri.Source
+				row["credited_at"] = ri.CreditedAt
+				row["original_order_no"] = ri.OriginalOrderNo
+			}
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, 200, map[string]any{"balance": bal, "entries": out})
 }

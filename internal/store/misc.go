@@ -65,6 +65,35 @@ func TryMarkProcessed(ctx context.Context, q Querier, consumer, eventKey string)
 	return tag.RowsAffected() == 1, nil
 }
 
+// ---- users / confirmations (核对辅助) ----
+
+// ListUserIDsByRole 某角色全部用户 ID(运营通知用)
+func ListUserIDsByRole(ctx context.Context, q Querier, role string) ([]int64, error) {
+	rows, err := q.Query(ctx, `SELECT id FROM users WHERE role=$1 ORDER BY id`, role)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// ConfirmationExists 订单是否存在指定类型的确认记录(核对回收员提交)
+func ConfirmationExists(ctx context.Context, q Querier, orderID int64, kind string) (bool, error) {
+	var ok bool
+	err := q.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM confirmations WHERE order_id=$1 AND kind=$2)`, orderID, kind).
+		Scan(&ok)
+	return ok, err
+}
+
 // ---- schedules ----
 
 func UpsertSchedule(ctx context.Context, q Querier, collectorID int64, date string, startHour, endHour, capacity int) error {

@@ -1,0 +1,2221 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "区域再生资源回收服务 API",
+    "version": "1.1.0",
+    "description": "居民预约 → 派单 → 上门称重 → 现金/积分结算 → 站点复称 → 环保凭证全链路。\n\nv1.1 新增积分到账异常核对：四要素核对(居民账号/回收员提交/积分规则/消息回调)、系统延迟自动补发、回收员未提交待处理任务、回调频繁失败技术排查与受影响居民名单。\n\n鉴权：所有 /api/v1 接口需请求头 Authorization: Bearer <token>。"
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8080",
+      "description": "本地"
+    }
+  ],
+  "tags": [
+    {
+      "name": "公共"
+    },
+    {
+      "name": "居民"
+    },
+    {
+      "name": "回收员"
+    },
+    {
+      "name": "回收站"
+    },
+    {
+      "name": "街道/运营"
+    },
+    {
+      "name": "积分异常核对"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "BearerToken": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "缺少/无效 token",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "error"
+              ]
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "角色不允许",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "error"
+              ]
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "资源不存在",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "error"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "BearerToken": []
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": [
+          "公共"
+        ],
+        "summary": "健康检查",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me": {
+      "get": {
+        "tags": [
+          "公共"
+        ],
+        "summary": "当前登录身份",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/prices": {
+      "get": {
+        "tags": [
+          "公共"
+        ],
+        "summary": "当前市场价(版本化)",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/notifications": {
+      "get": {
+        "tags": [
+          "公共"
+        ],
+        "summary": "我的通知(含 POINTS_REISSUED/SETTLEMENT_HELD/TECH_INCIDENT_*)",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/orders": {
+      "get": {
+        "tags": [
+          "居民"
+        ],
+        "summary": "我的预约列表",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "居民"
+        ],
+        "summary": "居民提交回收预约(支持 Idempotency-Key 幂等)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "category": {
+                          "type": "string",
+                          "example": "clothing"
+                        },
+                        "est_weight_kg": {
+                          "type": "number",
+                          "example": 6.0
+                        }
+                      },
+                      "required": [
+                        "category",
+                        "est_weight_kg"
+                      ]
+                    }
+                  },
+                  "address": {
+                    "type": "string"
+                  },
+                  "lat": {
+                    "type": "number"
+                  },
+                  "lng": {
+                    "type": "number"
+                  },
+                  "floor": {
+                    "type": "integer"
+                  },
+                  "has_elevator": {
+                    "type": "boolean"
+                  },
+                  "time_window_start": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "time_window_end": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "photos": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "idempotency_key": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "items",
+                  "time_window_start",
+                  "time_window_end"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "已创建"
+          },
+          "400": {
+            "description": "请求错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "角色不允许",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/orders/{id}": {
+      "get": {
+        "tags": [
+          "公共"
+        ],
+        "summary": "订单详情(仅相关方)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "403": {
+            "description": "角色不允许",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/orders/{id}/trace": {
+      "get": {
+        "tags": [
+          "公共"
+        ],
+        "summary": "全链路追踪(事件/确认/结算/积分流水/补发 points_reissues/回收员任务)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "403": {
+            "description": "角色不允许",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/orders/{id}/cancel": {
+      "post": {
+        "tags": [
+          "居民"
+        ],
+        "summary": "取消预约",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "409": {
+            "description": "状态冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/orders/{id}/confirm": {
+      "post": {
+        "tags": [
+          "居民"
+        ],
+        "summary": "居民本人确认称重与价格",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/orders/{id}/disputes": {
+      "post": {
+        "tags": [
+          "居民"
+        ],
+        "summary": "对称重/价格提出争议(订单冻结)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "example": "WEIGHT"
+                  },
+                  "detail": {
+                    "type": "string"
+                  },
+                  "item_id": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "detail"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "已受理"
+          }
+        }
+      }
+    },
+    "/api/v1/orders/{id}/complaints": {
+      "post": {
+        "tags": [
+          "公共"
+        ],
+        "summary": "投诉(相关方)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "已受理"
+          }
+        }
+      }
+    },
+    "/api/v1/points/balance": {
+      "get": {
+        "tags": [
+          "居民"
+        ],
+        "summary": "积分余额与流水(补发流水带 reissue_source/credited_at/original_order_no)",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/points/reissues": {
+      "get": {
+        "tags": [
+          "居民"
+        ],
+        "summary": "积分补发记录(补发来源/到账时间/原订单编号)",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reissues": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "integer"
+                          },
+                          "points": {
+                            "type": "integer"
+                          },
+                          "source": {
+                            "type": "string",
+                            "description": "补发来源",
+                            "example": "系统自动对账补发(积分到账延迟)"
+                          },
+                          "credited_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "到账时间"
+                          },
+                          "original_order_no": {
+                            "type": "string",
+                            "description": "原订单编号"
+                          },
+                          "original_order_id": {
+                            "type": "integer"
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/points/claims": {
+      "get": {
+        "tags": [
+          "居民"
+        ],
+        "summary": "我的积分申诉记录",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "居民"
+        ],
+        "summary": "积分不到账申诉(同步对账补账, 幂等)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "order_id": {
+                    "type": "integer"
+                  },
+                  "note": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "order_id"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "RESOLVED_CREDITED 或 ALREADY_CREDITED"
+          },
+          "400": {
+            "description": "请求错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "角色不允许",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/certificates": {
+      "get": {
+        "tags": [
+          "居民"
+        ],
+        "summary": "我的环保凭证",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/collector/duty": {
+      "post": {
+        "tags": [
+          "回收员"
+        ],
+        "summary": "上下班并更新位置",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "on_duty": {
+                    "type": "boolean"
+                  },
+                  "lat": {
+                    "type": "number"
+                  },
+                  "lng": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "on_duty"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/collector/orders": {
+      "get": {
+        "tags": [
+          "回收员"
+        ],
+        "summary": "回收员在途订单",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/collector/tasks": {
+      "get": {
+        "tags": [
+          "回收员"
+        ],
+        "summary": "待处理任务(如 SETTLEMENT_HELD 未提交结算, 影响结算/收益)",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "OPEN",
+                "RESOLVED",
+                "EXPIRED"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "open_count": {
+                      "type": "integer"
+                    },
+                    "tasks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "integer"
+                          },
+                          "order_id": {
+                            "type": "integer"
+                          },
+                          "order_no": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "example": "SETTLEMENT_HELD"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "impact": {
+                            "type": "string",
+                            "description": "对结算的影响"
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "resolved_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/collector/orders/{id}/accept": {
+      "post": {
+        "tags": [
+          "回收员"
+        ],
+        "summary": "接单",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "请求错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "状态冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/collector/orders/{id}/start": {
+      "post": {
+        "tags": [
+          "回收员"
+        ],
+        "summary": "出发",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "请求错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "状态冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/collector/orders/{id}/arrive": {
+      "post": {
+        "tags": [
+          "回收员"
+        ],
+        "summary": "到达(记迟到)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "请求错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "状态冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/collector/orders/{id}/verify-resident": {
+      "post": {
+        "tags": [
+          "回收员"
+        ],
+        "summary": "核验居民(SCAN_CODE / ASSISTED 限老人)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "method": {
+                    "type": "string",
+                    "enum": [
+                      "SCAN_CODE",
+                      "ASSISTED"
+                    ]
+                  },
+                  "verify_code": {
+                    "type": "string"
+                  },
+                  "assisted_note": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "method"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "请求错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "状态冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/collector/orders/{id}/items": {
+      "post": {
+        "tags": [
+          "回收员"
+        ],
+        "summary": "现场临时加品类(称重前)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "category": {
+                    "type": "string"
+                  },
+                  "est_weight_kg": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "category",
+                  "est_weight_kg"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "已创建"
+          },
+          "400": {
+            "description": "请求错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/collector/orders/{id}/weigh": {
+      "post": {
+        "tags": [
+          "回收员"
+        ],
+        "summary": "现场称重定价(可带扣杂千分比)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "weights": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "category": {
+                          "type": "string"
+                        },
+                        "weight_kg": {
+                          "type": "number"
+                        },
+                        "contamination_pm": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  },
+                  "photos": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "weights"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "请求错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "状态冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/collector/orders/{id}/confirm-assisted": {
+      "post": {
+        "tags": [
+          "回收员"
+        ],
+        "summary": "回收员协助老人确认称重(强制备注)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "assisted_note": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "assisted_note"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "请求错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "状态冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/collector/orders/{id}/settle": {
+      "post": {
+        "tags": [
+          "回收员"
+        ],
+        "summary": "结算 cash(同步)/points(异步Kafka); 补提交自动关闭未结任务",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "cash",
+                      "points"
+                    ]
+                  },
+                  "simulate_fail": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "请求错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "状态冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/collector/orders/{id}/settle/retry": {
+      "post": {
+        "tags": [
+          "回收员"
+        ],
+        "summary": "现金支付失败后重试",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "simulate_fail": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "请求错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "状态冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/collector/orders/{id}/deliver": {
+      "post": {
+        "tags": [
+          "回收员"
+        ],
+        "summary": "送达回收站",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "请求错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "状态冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/collector/earnings": {
+      "get": {
+        "tags": [
+          "回收员"
+        ],
+        "summary": "收益构成(未提交结算的订单不生成收益)",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/station/inbound/{orderId}/reweigh": {
+      "post": {
+        "tags": [
+          "回收站"
+        ],
+        "summary": "站点复称入库(超差扣罚, 开凭证, 完结)",
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "weights": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "category": {
+                          "type": "string"
+                        },
+                        "weight_kg": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "weights"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/station/inbound": {
+      "get": {
+        "tags": [
+          "回收站"
+        ],
+        "summary": "待入库列表",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/station/quality": {
+      "get": {
+        "tags": [
+          "回收站"
+        ],
+        "summary": "入库质量/复称差异统计",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/street/stats": {
+      "get": {
+        "tags": [
+          "街道/运营"
+        ],
+        "summary": "街道参与与分品类统计",
+        "parameters": [
+          {
+            "name": "street",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/street/flows": {
+      "get": {
+        "tags": [
+          "街道/运营"
+        ],
+        "summary": "资源流向统计",
+        "parameters": [
+          {
+            "name": "street",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/street/disputes": {
+      "get": {
+        "tags": [
+          "街道/运营"
+        ],
+        "summary": "争议列表",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/street/disputes/{id}/resolve": {
+      "post": {
+        "tags": [
+          "街道/运营"
+        ],
+        "summary": "街道裁决争议(adjust/confirm/reject)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "adjust",
+                      "confirm",
+                      "reject"
+                    ]
+                  },
+                  "note": {
+                    "type": "string"
+                  },
+                  "adjusted_weights": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "category": {
+                          "type": "string"
+                        },
+                        "weight_kg": {
+                          "type": "number"
+                        },
+                        "contamination_pm": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "action"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/street/complaints": {
+      "get": {
+        "tags": [
+          "街道/运营"
+        ],
+        "summary": "投诉列表",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/street/complaints/{id}/resolve": {
+      "post": {
+        "tags": [
+          "街道/运营"
+        ],
+        "summary": "处理投诉",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "resolution": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "resolution"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/street/prices": {
+      "post": {
+        "tags": [
+          "街道/运营"
+        ],
+        "summary": "更新市场价(版本化, 不影响老订单快照)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "category": {
+                    "type": "string"
+                  },
+                  "price_yuan_per_kg": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "category",
+                  "price_yuan_per_kg"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/street/points/reconcile": {
+      "post": {
+        "tags": [
+          "积分异常核对"
+        ],
+        "summary": "手动触发积分到账核对(系统延迟自动补发/未提交生成任务/排查恢复关闭)",
+        "responses": {
+          "200": {
+            "description": "核对结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reissued": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "settlement_id": {
+                            "type": "integer"
+                          },
+                          "order_id": {
+                            "type": "integer"
+                          },
+                          "original_order_no": {
+                            "type": "string"
+                          },
+                          "points": {
+                            "type": "integer"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "credited_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "created": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "tasks_created": {
+                      "type": "integer"
+                    },
+                    "incidents_resolved": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "角色不允许",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/street/orders/{id}/points-check": {
+      "get": {
+        "tags": [
+          "积分异常核对"
+        ],
+        "summary": "单笔订单四要素核对(居民账号/回收员提交/积分规则/消息回调)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "核对结论",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "check": {
+                      "type": "object",
+                      "properties": {
+                        "order_no": {
+                          "type": "string"
+                        },
+                        "order_status": {
+                          "type": "string"
+                        },
+                        "account_verified": {
+                          "type": "boolean"
+                        },
+                        "submitted": {
+                          "type": "boolean"
+                        },
+                        "expected_points": {
+                          "type": "integer"
+                        },
+                        "callback_credited": {
+                          "type": "boolean"
+                        },
+                        "has_reissue": {
+                          "type": "boolean"
+                        },
+                        "open_task": {
+                          "type": "boolean"
+                        },
+                        "diagnosis": {
+                          "type": "string",
+                          "example": "SYSTEM_DELAY_PENDING_REISSUE"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "角色不允许",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/street/tech-incidents": {
+      "get": {
+        "tags": [
+          "积分异常核对"
+        ],
+        "summary": "技术排查记录(回调频繁失败自动生成, 恢复后自动关闭)",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "OPEN",
+                "RESOLVED"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "403": {
+            "description": "角色不允许",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/street/callback-affected": {
+      "get": {
+        "tags": [
+          "积分异常核对"
+        ],
+        "summary": "回调失败受影响居民名单(账号/电话/订单号/失败次数/已补发数), 便于集中解释",
+        "parameters": [
+          {
+            "name": "topic",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "recycle.points.commands"
+            }
+          },
+          {
+            "name": "consumer",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "points-consumer"
+            }
+          },
+          {
+            "name": "since_minutes",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 60
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "名单",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "affected_count": {
+                      "type": "integer"
+                    },
+                    "residents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "resident_id": {
+                            "type": "integer"
+                          },
+                          "account": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "phone": {
+                            "type": "string"
+                          },
+                          "fail_count": {
+                            "type": "integer"
+                          },
+                          "orders_affected": {
+                            "type": "integer"
+                          },
+                          "order_nos": {
+                            "type": "string"
+                          },
+                          "reissued_count": {
+                            "type": "integer"
+                          },
+                          "last_fail_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "角色不允许",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

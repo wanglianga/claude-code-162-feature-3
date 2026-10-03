@@ -106,6 +106,28 @@ func main() {
 			}
 		}()
 
+		// 积分到账异常核对定时器: 延迟自动补发 / 回收员未提交生成任务 / 回调排查自动关闭
+		go func() {
+			t := time.NewTicker(5 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					rep, err := s.ReconcilePoints(ctx)
+					if err != nil {
+						log.Printf("points reconcile tick: %v", err)
+						continue
+					}
+					if rep != nil && (len(rep.Reissued) > 0 || rep.TasksCreated > 0 || rep.IncidentsResolved > 0) {
+						log.Printf("points reconcile tick: %d reissued, %d tasks, %d incidents resolved",
+							len(rep.Reissued), rep.TasksCreated, rep.IncidentsResolved)
+					}
+				}
+			}
+		}()
+
 		srv := &http.Server{
 			Addr:    cfg.HTTPAddr,
 			Handler: httpapi.NewServer(s, st).Router(),

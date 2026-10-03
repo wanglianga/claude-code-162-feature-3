@@ -67,6 +67,39 @@ const (
 	SettleFailed  = "FAILED"
 )
 
+// 积分流水类型
+const (
+	PointsKindRecycleCredit  = "RECYCLE_CREDIT"
+	PointsKindVarianceAdjust = "VARIANCE_ADJUST"
+	PointsKindClaimRecredit  = "CLAIM_RECREDIT"
+	PointsKindAutoReissue    = "AUTO_REISSUE" // 系统延迟自动补发
+)
+
+// 积分补发原因/来源
+const (
+	ReissueReasonSystemDelay       = "SYSTEM_DELAY"
+	ReissueReasonCallbackExhausted = "CALLBACK_RETRY_EXHAUSTED"
+	ReissueReasonManualReconcile   = "MANUAL_RECONCILE"
+	ReissueSourceAutoReconcile     = "系统自动对账补发(积分到账延迟)"
+	ReissueSourceCallbackReissue   = "消息回调失败自动补发"
+	ReissueSourceManualReconcile   = "人工/申诉核对补发"
+)
+
+// 回收员待处理任务
+const (
+	TaskKindSettlementHeld = "SETTLEMENT_HELD" // 上门完成但回收员未提交结算
+	TaskStatusOpen         = "OPEN"
+	TaskStatusResolved     = "RESOLVED"
+	TaskStatusExpired      = "EXPIRED"
+)
+
+// 技术排查
+const (
+	IncidentKindCallbackFailure = "CALLBACK_FAILURE"
+	IncidentStatusOpen          = "OPEN"
+	IncidentStatusResolved      = "RESOLVED"
+)
+
 // 复称差异
 const (
 	VarianceNone          = "NONE"
@@ -140,12 +173,12 @@ type Collector struct {
 }
 
 type Station struct {
-	ID      int64
-	UserID  int64
-	Name    string
-	Street  string
-	Lat     float64
-	Lng     float64
+	ID     int64
+	UserID int64
+	Name   string
+	Street string
+	Lat    float64
+	Lng    float64
 }
 
 type Order struct {
@@ -243,14 +276,14 @@ type PointsEntry struct {
 }
 
 type Certificate struct {
-	ID        int64     `json:"id"`
-	CertNo    string    `json:"cert_no"`
-	OrderID   int64     `json:"order_id"`
-	ResidentID int64    `json:"resident_id"`
-	Category  string    `json:"category"`
-	WeightG   int64     `json:"weight_g"`
-	CO2SavedG int64     `json:"co2_saved_g"`
-	IssuedAt  time.Time `json:"issued_at"`
+	ID         int64     `json:"id"`
+	CertNo     string    `json:"cert_no"`
+	OrderID    int64     `json:"order_id"`
+	ResidentID int64     `json:"resident_id"`
+	Category   string    `json:"category"`
+	WeightG    int64     `json:"weight_g"`
+	CO2SavedG  int64     `json:"co2_saved_g"`
+	IssuedAt   time.Time `json:"issued_at"`
 }
 
 type InboundRecord struct {
@@ -299,4 +332,63 @@ type CollectorEarning struct {
 	PenaltyCents  int64     `json:"penalty_cents"`
 	TotalCents    int64     `json:"total_cents"`
 	CreatedAt     time.Time `json:"created_at"`
+}
+
+// PointsReissue 积分补发记录(居民端可见来源/到账时间/原订单编号)
+type PointsReissue struct {
+	ID              int64     `json:"id"`
+	ResidentID      int64     `json:"resident_id"`
+	OrderID         int64     `json:"order_id"`
+	SettlementID    int64     `json:"settlement_id"`
+	Points          int64     `json:"points"`
+	Reason          string    `json:"reason"`
+	Source          string    `json:"source"`
+	OriginalOrderNo string    `json:"original_order_no"`
+	PointsEntryID   *int64    `json:"points_entry_id,omitempty"`
+	IdempotencyKey  string    `json:"-"`
+	CreditedAt      time.Time `json:"credited_at"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+// CollectorTask 回收员待处理任务(未提交结算等), 影响结算
+type CollectorTask struct {
+	ID          int64          `json:"id"`
+	CollectorID int64          `json:"collector_id"`
+	OrderID     int64          `json:"order_id"`
+	Kind        string         `json:"kind"`
+	Status      string         `json:"status"`
+	Reason      string         `json:"reason"`
+	Impact      string         `json:"impact"`
+	Detail      map[string]any `json:"detail"`
+	CreatedAt   time.Time      `json:"created_at"`
+	ResolvedAt  *time.Time     `json:"resolved_at,omitempty"`
+}
+
+// CallbackFailure 消息回调投递失败记录
+type CallbackFailure struct {
+	ID         int64     `json:"id"`
+	Topic      string    `json:"topic"`
+	Consumer   string    `json:"consumer"`
+	MsgKey     string    `json:"msg_key"`
+	Err        string    `json:"err"`
+	ResidentID *int64    `json:"resident_id,omitempty"`
+	OrderID    *int64    `json:"order_id,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// TechIncident 技术排查记录
+type TechIncident struct {
+	ID          int64      `json:"id"`
+	Kind        string     `json:"kind"`
+	Topic       string     `json:"topic"`
+	Consumer    string     `json:"consumer"`
+	Status      string     `json:"status"`
+	FailCount   int        `json:"fail_count"`
+	WindowSecs  int        `json:"window_secs"`
+	Threshold   int        `json:"threshold"`
+	Summary     string     `json:"summary"`
+	FirstFailAt time.Time  `json:"first_fail_at"`
+	LastFailAt  time.Time  `json:"last_fail_at"`
+	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
 }

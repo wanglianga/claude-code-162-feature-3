@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"recycle/internal/domain"
+	"recycle/internal/openapi"
 	"recycle/internal/store"
 	"recycle/internal/svc"
 )
@@ -111,6 +112,8 @@ func requireRole(role string, next http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
+	// 公开 API 文档: /docs/(Swagger UI) 与 /openapi.json(OpenAPI 3 规范, 均无需鉴权)
+	openapi.Register(r)
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, 200, map[string]string{"status": "ok"})
 	})
@@ -131,11 +134,13 @@ func (s *Server) Router() http.Handler {
 		r.With(s.auth).Get("/points/balance", requireRole(domain.RoleResident, s.handlePointsBalance))
 		r.With(s.auth).Post("/points/claims", requireRole(domain.RoleResident, s.handlePointsClaim))
 		r.With(s.auth).Get("/points/claims", requireRole(domain.RoleResident, s.handlePointsClaims))
+		r.With(s.auth).Get("/points/reissues", requireRole(domain.RoleResident, s.handlePointsReissues))
 		r.With(s.auth).Get("/certificates", requireRole(domain.RoleResident, s.handleMyCertificates))
 
 		// 回收员
 		r.With(s.auth).Post("/collector/duty", requireRole(domain.RoleCollector, s.handleDuty))
 		r.With(s.auth).Get("/collector/orders", requireRole(domain.RoleCollector, s.handleCollectorOrders))
+		r.With(s.auth).Get("/collector/tasks", requireRole(domain.RoleCollector, s.handleCollectorTasks))
 		r.With(s.auth).Post("/collector/orders/{id}/accept", requireRole(domain.RoleCollector, s.handleAccept))
 		r.With(s.auth).Post("/collector/orders/{id}/start", requireRole(domain.RoleCollector, s.handleStart))
 		r.With(s.auth).Post("/collector/orders/{id}/arrive", requireRole(domain.RoleCollector, s.handleArrive))
@@ -161,6 +166,12 @@ func (s *Server) Router() http.Handler {
 		r.With(s.auth).Get("/street/complaints", requireRole(domain.RoleStreet, s.handleListComplaints))
 		r.With(s.auth).Post("/street/complaints/{id}/resolve", requireRole(domain.RoleStreet, s.handleResolveComplaint))
 		r.With(s.auth).Post("/street/prices", requireRole(domain.RoleStreet, s.handleUpdatePrice))
+
+		// 运营(街道): 积分到账异常核对/补发/技术排查/受影响居民名单
+		r.With(s.auth).Post("/street/points/reconcile", requireRole(domain.RoleStreet, s.handleStreetReconcile))
+		r.With(s.auth).Get("/street/orders/{id}/points-check", requireRole(domain.RoleStreet, s.handleStreetOrderCheck))
+		r.With(s.auth).Get("/street/tech-incidents", requireRole(domain.RoleStreet, s.handleStreetIncidents))
+		r.With(s.auth).Get("/street/callback-affected", requireRole(domain.RoleStreet, s.handleStreetAffectedResidents))
 	})
 	return r
 }

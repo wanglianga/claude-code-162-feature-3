@@ -122,7 +122,7 @@ func (s *Service) FileComplaint(ctx context.Context, orderID int64, fromRole str
 		ev := &domain.OrderEvent{
 			OrderID: orderID, FromStatus: o.Status, ToStatus: o.Status,
 			ActorRole: fromRole, ActorID: fromID,
-			Detail:    map[string]any{"kind": "complaint", "complaint_id": c.ID},
+			Detail: map[string]any{"kind": "complaint", "complaint_id": c.ID},
 		}
 		return store.AddOrderEvent(ctx, tx, ev)
 	})
@@ -167,11 +167,13 @@ type OrderTrace struct {
 	Confirmations []*domain.Confirmation   `json:"confirmations"`
 	Settlements   []*domain.Settlement     `json:"settlements"`
 	PointsEntries []*domain.PointsEntry    `json:"points_entries"`
+	Reissues      []*domain.PointsReissue  `json:"points_reissues"`
 	Inbound       *domain.InboundRecord    `json:"inbound,omitempty"`
 	Certificates  []*domain.Certificate    `json:"certificates"`
 	Earning       *domain.CollectorEarning `json:"earning,omitempty"`
 	Disputes      []*domain.Dispute        `json:"disputes"`
 	Complaints    []*domain.Complaint      `json:"complaints"`
+	Tasks         []*domain.CollectorTask  `json:"collector_tasks"`
 }
 
 func (s *Service) Trace(ctx context.Context, orderID int64) (*OrderTrace, error) {
@@ -203,6 +205,29 @@ func (s *Service) Trace(ctx context.Context, orderID int64) (*OrderTrace, error)
 		for _, e := range entries {
 			if e.OrderID != nil && *e.OrderID == orderID {
 				t.PointsEntries = append(t.PointsEntries, e)
+			}
+		}
+		reissues, err := store.ListPointsReissuesByResident(ctx, q, o.ResidentID, 200)
+		if err != nil {
+			return nil, err
+		}
+		t.Reissues = []*domain.PointsReissue{}
+		for _, ri := range reissues {
+			if ri.OrderID == orderID {
+				t.Reissues = append(t.Reissues, ri)
+			}
+		}
+	}
+	// 回收员待处理任务
+	t.Tasks = []*domain.CollectorTask{}
+	if o.CollectorID != nil {
+		tasks, err := store.ListCollectorTasks(ctx, q, *o.CollectorID, "")
+		if err != nil {
+			return nil, err
+		}
+		for _, tk := range tasks {
+			if tk.OrderID == orderID {
+				t.Tasks = append(t.Tasks, tk)
 			}
 		}
 	}
