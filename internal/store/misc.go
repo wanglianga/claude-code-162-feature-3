@@ -185,10 +185,11 @@ func CreateEarning(ctx context.Context, q Querier, e *domain.CollectorEarning) e
 func EarningByOrder(ctx context.Context, q Querier, orderID int64) (*domain.CollectorEarning, error) {
 	e := &domain.CollectorEarning{}
 	err := q.QueryRow(ctx,
-		`SELECT id, collector_id, order_id, base_cents, weight_cents, floor_cents, distance_cents, penalty_cents, total_cents, created_at
+		`SELECT id, collector_id, order_id, base_cents, weight_cents, floor_cents, distance_cents,
+		        penalty_cents, total_cents, held, held_reason, created_at
 		 FROM collector_earnings WHERE order_id=$1`, orderID).
 		Scan(&e.ID, &e.CollectorID, &e.OrderID, &e.BaseCents, &e.WeightCents, &e.FloorCents,
-			&e.DistanceCents, &e.PenaltyCents, &e.TotalCents, &e.CreatedAt)
+			&e.DistanceCents, &e.PenaltyCents, &e.TotalCents, &e.Held, &e.HeldReason, &e.CreatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, ErrNotFound
 	}
@@ -197,7 +198,8 @@ func EarningByOrder(ctx context.Context, q Querier, orderID int64) (*domain.Coll
 
 func ListEarnings(ctx context.Context, q Querier, collectorID int64, limit int) ([]*domain.CollectorEarning, error) {
 	rows, err := q.Query(ctx,
-		`SELECT id, collector_id, order_id, base_cents, weight_cents, floor_cents, distance_cents, penalty_cents, total_cents, created_at
+		`SELECT id, collector_id, order_id, base_cents, weight_cents, floor_cents, distance_cents,
+		        penalty_cents, total_cents, held, held_reason, created_at
 		 FROM collector_earnings WHERE collector_id=$1 ORDER BY id DESC LIMIT $2`, collectorID, limit)
 	if err != nil {
 		return nil, err
@@ -207,7 +209,8 @@ func ListEarnings(ctx context.Context, q Querier, collectorID int64, limit int) 
 	for rows.Next() {
 		e := &domain.CollectorEarning{}
 		if err := rows.Scan(&e.ID, &e.CollectorID, &e.OrderID, &e.BaseCents, &e.WeightCents,
-			&e.FloorCents, &e.DistanceCents, &e.PenaltyCents, &e.TotalCents, &e.CreatedAt); err != nil {
+			&e.FloorCents, &e.DistanceCents, &e.PenaltyCents, &e.TotalCents,
+			&e.Held, &e.HeldReason, &e.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, e)

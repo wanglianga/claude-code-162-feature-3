@@ -147,7 +147,7 @@ func (s *Service) DetectLate(ctx context.Context) (int, error) {
 			ev := &domain.OrderEvent{
 				OrderID: locked.ID, FromStatus: locked.Status, ToStatus: locked.Status,
 				ActorRole: domain.RoleSystem, ActorID: 0,
-				Detail:    map[string]any{"kind": "ORDER_LATE", "late_minutes": lateMinutes},
+				Detail: map[string]any{"kind": "ORDER_LATE", "late_minutes": lateMinutes},
 			}
 			if err := store.AddOrderEvent(ctx, tx, ev); err != nil {
 				return err

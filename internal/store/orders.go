@@ -37,6 +37,25 @@ func UserByID(ctx context.Context, q Querier, id int64) (*domain.User, error) {
 	return u, err
 }
 
+// UsersByRole 某角色全部账号(如运营通知: street)
+func UsersByRole(ctx context.Context, q Querier, role string) ([]*domain.User, error) {
+	rows, err := q.Query(ctx,
+		`SELECT id, account, name, role, token, phone FROM users WHERE role=$1`, role)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*domain.User
+	for rows.Next() {
+		u := &domain.User{}
+		if err := rows.Scan(&u.ID, &u.Account, &u.Name, &u.Role, &u.Token, &u.Phone); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
 // ---- residents / collectors / stations ----
 
 func ResidentByID(ctx context.Context, q Querier, id int64) (*domain.Resident, error) {
@@ -304,6 +323,13 @@ func scanOrders(rows pgx.Rows) ([]*domain.Order, error) {
 		out = append(out, o)
 	}
 	return out, rows.Err()
+}
+
+// OrderIDByOrderNo 按订单编号查订单 ID(不存在返回 0)
+func OrderIDByOrderNo(ctx context.Context, q Querier, orderNo string) int64 {
+	var id int64
+	_ = q.QueryRow(ctx, `SELECT id FROM orders WHERE order_no=$1`, orderNo).Scan(&id)
+	return id
 }
 
 // CountActiveByCollector 回收员当前在途单数

@@ -47,8 +47,9 @@ func (s *Service) ClaimPoints(ctx context.Context, residentID, orderID int64, no
 		result.ClaimID = claimID
 
 		idemKey := fmt.Sprintf("settlement:%d", st.ID)
-		entry, credited, err := store.CreditPoints(ctx, tx, residentID, &orderID, &st.ID,
-			st.Points, "RECYCLE_CREDIT", idemKey)
+		entry, credited, err := store.CreditPointsWithSource(ctx, tx, residentID, &orderID, &st.ID,
+			st.Points, "CLAIM_RECREDIT", idemKey,
+			domain.PointsSourceManualReissue, domain.ReissueReasonResidentClaim, o.OrderNo)
 		if err != nil {
 			return err
 		}
@@ -57,8 +58,12 @@ func (s *Service) ClaimPoints(ctx context.Context, residentID, orderID int64, no
 			if err := store.MarkSettlementSuccess(ctx, tx, st.ID); err != nil {
 				return err
 			}
+			_, _ = store.TryMarkProcessed(ctx, tx, "points-consumer", idemKey)
 			if o.Status == domain.StatusConfirmed {
 				if err := s.createEarning(ctx, tx, o); err != nil {
+					return err
+				}
+				if err := s.handleSubmissionTask(ctx, tx, o, "resident_claim"); err != nil {
 					return err
 				}
 				if err := s.transit(ctx, tx, o, domain.StatusSettled, domain.RoleSystem, 0,
@@ -70,7 +75,12 @@ func (s *Service) ClaimPoints(ctx context.Context, residentID, orderID int64, no
 			result.Status = "RESOLVED_CREDITED"
 			result.Credited = st.Points
 			result.Balance = entry.BalanceAfter
-			result.Message = fmt.Sprintf("积分已补入账: +%d, 当前余额 %d", st.Points, entry.BalanceAfter)
+			result.Message = fmt.Sprintf("积分已补入账: +%d, 当前余额 %d (补发来源: 居民申诉补发, 原订单 %s, 到账时间 %s)",
+				st.Points, entry.BalanceAfter, o.OrderNo, entry.CreatedAt.Format("2006-01-02 15:04:05"))
+			if err := s.notifyReissue(ctx, tx, residentID, o.OrderNo, st.Points, entry.BalanceAfter,
+				"resident_claim", domain.PointsSourceManualReissue); err != nil {
+				return err
+			}
 			return store.ResolvePointsClaim(ctx, tx, claimID, "RESOLVED_CREDITED", result.Message)
 		}
 		// 已入账
@@ -126,6 +136,10 @@ func (s *Service) CreditPointsFromCommand(ctx context.Context, settlementID int6
 			if err := s.createEarning(ctx, tx, o); err != nil {
 				return err
 			}
+			// 该单曾因回收员迟交被开任务: 已提交 -> 收益冻结待运营核对
+			if err := s.handleSubmissionTask(ctx, tx, o, "points_consumer"); err != nil {
+				return err
+			}
 			if err := s.transit(ctx, tx, o, domain.StatusSettled, domain.RoleSystem, 0,
 				map[string]any{"type": domain.SettlePoints, "points": st.Points, "via": "points_consumer"},
 				map[string]any{"settlement_type": domain.SettlePoints}); err != nil {
@@ -139,7 +153,11 @@ func (s *Service) CreditPointsFromCommand(ctx context.Context, settlementID int6
 		}); err != nil {
 			return err
 		}
-		return s.notify(ctx, tx, o.ResidentID, "POINTS_CREDITED",
-			fmt.Sprintf("订单 %s 积分已到账: +%d, 余额 %d", o.OrderNo, st.Points, bal))
+		return store.AddOutbox(ctx, tx, domain.TopicNotifications, fmt.Sprintf("user:%d", o.ResidentID), map[string]any{
+			"user_id": o.ResidentID, "kind": "POINTS_CREDITED",
+			"content":  fmt.Sprintf("订单 %s 积分已到账: +%d, 余额 %d", o.OrderNo, st.Points, bal),
+			"order_id": o.ID, "order_no": o.OrderNo, "resident_id": o.ResidentID,
+			"points": st.Points, "at": time.Now().UTC(),
+		})
 	})
 }

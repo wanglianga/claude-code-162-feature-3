@@ -75,7 +75,7 @@ func main() {
 		go pointsConsumer.Run(ctx)
 
 		notifConsumer := events.NewConsumer(cfg.KafkaBrokers, "recycle.notifications", "notification-consumer", "notify",
-			events.NotificationHandler(st))
+			events.NotificationHandler(s, func() int { return cfg.NotifyFailAttempts }))
 		defer notifConsumer.Close()
 		go notifConsumer.Run(ctx)
 
@@ -87,7 +87,7 @@ func main() {
 	}
 
 	if runServer {
-		// 派单与迟到检测定时器
+		// 派单、迟到检测与积分异常对账定时器
 		go func() {
 			t := time.NewTicker(10 * time.Second)
 			defer t.Stop()
@@ -101,6 +101,9 @@ func main() {
 					}
 					if n, err := s.DetectLate(ctx); err == nil && n > 0 {
 						log.Printf("late tick: %d orders marked late", n)
+					}
+					if reissued, tasks, err := s.ScanPointsAnomalies(ctx); err == nil && (reissued > 0 || tasks > 0) {
+						log.Printf("points-anomaly tick: %d auto-reissued, %d missing-submission tasks", reissued, tasks)
 					}
 				}
 			}

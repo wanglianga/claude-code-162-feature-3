@@ -157,8 +157,8 @@ func (s *Server) handleResolveDispute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Action string `json:"action"` // adjust | confirm | reject
-		Note   string `json:"note"`
+		Action          string `json:"action"` // adjust | confirm | reject
+		Note            string `json:"note"`
 		AdjustedWeights []struct {
 			Category        string  `json:"category"`
 			WeightKg        float64 `json:"weight_kg"`

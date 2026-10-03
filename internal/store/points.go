@@ -83,6 +83,13 @@ func MarkSettlementFailed(ctx context.Context, q Querier, id int64, reason strin
 // 返回 (entry, created, err); 已存在同键流水时返回已有记录且 created=false
 func CreditPoints(ctx context.Context, q Querier, residentID int64, orderID, settlementID *int64,
 	delta int64, kind, idemKey string) (*domain.PointsEntry, bool, error) {
+	return CreditPointsWithSource(ctx, q, residentID, orderID, settlementID, delta, kind, idemKey,
+		domain.PointsSourceNormal, "", "")
+}
+
+// CreditPointsWithSource 幂等入账并记录补发来源/原因/原订单编号
+func CreditPointsWithSource(ctx context.Context, q Querier, residentID int64, orderID, settlementID *int64,
+	delta int64, kind, idemKey, source, reissueReason, originOrderNo string) (*domain.PointsEntry, bool, error) {
 
 	// 先查幂等键, 已入账则直接返回
 	if e, err := PointsEntryByKey(ctx, q, idemKey); err == nil {
@@ -107,9 +114,11 @@ func CreditPoints(ctx context.Context, q Querier, residentID int64, orderID, set
 
 	e := &domain.PointsEntry{}
 	err = q.QueryRow(ctx,
-		`INSERT INTO points_entries (resident_id, order_id, settlement_id, delta, balance_after, kind, idempotency_key)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, created_at`,
-		residentID, orderID, settlementID, delta, balance, kind, idemKey).
+		`INSERT INTO points_entries
+		 (resident_id, order_id, settlement_id, delta, balance_after, kind, idempotency_key, source, reissue_reason, origin_order_no)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id, created_at`,
+		residentID, orderID, settlementID, delta, balance, kind, idemKey,
+		source, reissueReason, originOrderNo).
 		Scan(&e.ID, &e.CreatedAt)
 	if err != nil {
 		if IsUniqueViolation(err) {
@@ -127,20 +136,28 @@ func CreditPoints(ctx context.Context, q Querier, residentID int64, orderID, set
 	e.BalanceAfter = balance
 	e.Kind = kind
 	e.IdempotencyKey = idemKey
+	e.Source = source
+	e.ReissueReason = reissueReason
+	e.OriginOrderNo = originOrderNo
 	return e, true, nil
 }
 
-func PointsEntryByKey(ctx context.Context, q Querier, key string) (*domain.PointsEntry, error) {
+const pointsEntryCols = `id, resident_id, order_id, settlement_id, delta, balance_after, kind,
+	idempotency_key, source, reissue_reason, origin_order_no, created_at`
+
+func scanPointsEntry(row pgx.Row) (*domain.PointsEntry, error) {
 	e := &domain.PointsEntry{}
-	err := q.QueryRow(ctx,
-		`SELECT id, resident_id, order_id, settlement_id, delta, balance_after, kind, idempotency_key, created_at
-		 FROM points_entries WHERE idempotency_key=$1`, key).
-		Scan(&e.ID, &e.ResidentID, &e.OrderID, &e.SettlementID, &e.Delta, &e.BalanceAfter,
-			&e.Kind, &e.IdempotencyKey, &e.CreatedAt)
+	err := row.Scan(&e.ID, &e.ResidentID, &e.OrderID, &e.SettlementID, &e.Delta, &e.BalanceAfter,
+		&e.Kind, &e.IdempotencyKey, &e.Source, &e.ReissueReason, &e.OriginOrderNo, &e.CreatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, ErrNotFound
 	}
 	return e, err
+}
+
+func PointsEntryByKey(ctx context.Context, q Querier, key string) (*domain.PointsEntry, error) {
+	return scanPointsEntry(q.QueryRow(ctx,
+		`SELECT `+pointsEntryCols+` FROM points_entries WHERE idempotency_key=$1`, key))
 }
 
 func PointsBalance(ctx context.Context, q Querier, residentID int64) (int64, error) {
@@ -154,17 +171,16 @@ func PointsBalance(ctx context.Context, q Querier, residentID int64) (int64, err
 
 func ListPointsEntries(ctx context.Context, q Querier, residentID int64, limit int) ([]*domain.PointsEntry, error) {
 	rows, err := q.Query(ctx,
-		`SELECT id, resident_id, order_id, settlement_id, delta, balance_after, kind, idempotency_key, created_at
-		 FROM points_entries WHERE resident_id=$1 ORDER BY id DESC LIMIT $2`, residentID, limit)
+		`SELECT `+pointsEntryCols+` FROM points_entries WHERE resident_id=$1 ORDER BY id DESC LIMIT $2`,
+		residentID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []*domain.PointsEntry
 	for rows.Next() {
-		e := &domain.PointsEntry{}
-		if err := rows.Scan(&e.ID, &e.ResidentID, &e.OrderID, &e.SettlementID, &e.Delta,
-			&e.BalanceAfter, &e.Kind, &e.IdempotencyKey, &e.CreatedAt); err != nil {
+		e, err := scanPointsEntry(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, e)

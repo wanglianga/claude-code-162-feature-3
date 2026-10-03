@@ -122,7 +122,7 @@ func (s *Service) FileComplaint(ctx context.Context, orderID int64, fromRole str
 		ev := &domain.OrderEvent{
 			OrderID: orderID, FromStatus: o.Status, ToStatus: o.Status,
 			ActorRole: fromRole, ActorID: fromID,
-			Detail:    map[string]any{"kind": "complaint", "complaint_id": c.ID},
+			Detail: map[string]any{"kind": "complaint", "complaint_id": c.ID},
 		}
 		return store.AddOrderEvent(ctx, tx, ev)
 	})

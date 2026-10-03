@@ -38,6 +38,7 @@ if (exec 3<>/dev/tcp/127.0.0.1/$KAFKA_PORT) 2>/dev/null; then
   echo "    already running"
 else
   if [ ! -d "$KAFKA_DIR" ]; then
+    mkdir -p "$INFRA_DIR"
     TARBALL="$INFRA_DIR/kafka.tgz"
     if [ ! -s "$TARBALL" ]; then
       echo "    downloading kafka..."

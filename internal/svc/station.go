@@ -3,6 +3,7 @@ package svc
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"recycle/internal/domain"
@@ -212,10 +213,14 @@ func (s *Service) StationReweigh(ctx context.Context, stationUserID, orderID int
 			return err
 		}
 		o.FinalCents = finalTotal
-		// 通知居民
-		return s.notify(ctx, tx, o.ResidentID, "ORDER_COMPLETED",
-			fmt.Sprintf("订单 %s 已完成, 最终金额 %.2f 元, 已开具 %d 张环保凭证",
-				o.OrderNo, domain.CentsToYuan(finalTotal), len(certs)))
+		// 通知居民(载荷带订单标识, 回调失败时可归入受影响居民名单)
+		return store.AddOutbox(ctx, tx, domain.TopicNotifications, fmt.Sprintf("user:%d", o.ResidentID), map[string]any{
+			"user_id": o.ResidentID, "kind": "ORDER_COMPLETED",
+			"content": fmt.Sprintf("订单 %s 已完成, 最终金额 %.2f 元, 已开具 %d 张环保凭证",
+				o.OrderNo, domain.CentsToYuan(finalTotal), len(certs)),
+			"order_id": o.ID, "order_no": o.OrderNo, "resident_id": o.ResidentID,
+			"at": time.Now().UTC(),
+		})
 	})
 	return o, items, err
 }

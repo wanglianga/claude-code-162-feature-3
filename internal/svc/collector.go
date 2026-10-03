@@ -417,6 +417,9 @@ func (s *Service) Settle(ctx context.Context, collectorID, orderID int64,
 			if err := s.createEarning(ctx, tx, o); err != nil {
 				return err
 			}
+			if err := s.ResolveSubmissionTaskOnCash(ctx, tx, o); err != nil {
+				return err
+			}
 			return s.transit(ctx, tx, o, domain.StatusSettled, domain.RoleCollector, collectorID,
 				map[string]any{"type": settleType, "amount_cents": o.OnsiteCents},
 				map[string]any{"settlement_type": settleType})
@@ -467,6 +470,9 @@ func (s *Service) RetryCashSettlement(ctx context.Context, collectorID, orderID 
 		st.Status = domain.SettleSuccess
 		st.RetryCount++
 		if err := s.createEarning(ctx, tx, o); err != nil {
+			return err
+		}
+		if err := s.ResolveSubmissionTaskOnCash(ctx, tx, o); err != nil {
 			return err
 		}
 		return s.transit(ctx, tx, o, domain.StatusSettled, domain.RoleCollector, collectorID,

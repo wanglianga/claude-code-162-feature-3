@@ -153,15 +153,15 @@ type createOrderReq struct {
 		Category    string  `json:"category"`
 		EstWeightKg float64 `json:"est_weight_kg"`
 	} `json:"items"`
-	Address       string   `json:"address"`
-	Lat           float64  `json:"lat"`
-	Lng           float64  `json:"lng"`
-	Floor         int      `json:"floor"`
-	HasElevator   bool     `json:"has_elevator"`
-	WindowStart   string   `json:"time_window_start"`
-	WindowEnd     string   `json:"time_window_end"`
-	Photos        []string `json:"photos"`
-	IdempotencyKey string  `json:"idempotency_key"`
+	Address        string   `json:"address"`
+	Lat            float64  `json:"lat"`
+	Lng            float64  `json:"lng"`
+	Floor          int      `json:"floor"`
+	HasElevator    bool     `json:"has_elevator"`
+	WindowStart    string   `json:"time_window_start"`
+	WindowEnd      string   `json:"time_window_end"`
+	Photos         []string `json:"photos"`
+	IdempotencyKey string   `json:"idempotency_key"`
 }
 
 func (s *Server) handleCreateOrder(w http.ResponseWriter, r *http.Request) {
@@ -380,10 +380,13 @@ func (s *Server) handlePointsBalance(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []map[string]any{}
 	for _, e := range entries {
-		out = append(out, map[string]any{
+		row := map[string]any{
 			"id": e.ID, "delta": e.Delta, "balance_after": e.BalanceAfter,
 			"kind": e.Kind, "order_id": e.OrderID, "created_at": e.CreatedAt,
-		})
+			"source": e.Source, "reissue_reason": e.ReissueReason,
+			"origin_order_no": e.OriginOrderNo,
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, 200, map[string]any{"balance": bal, "entries": out})
 }

@@ -74,6 +74,39 @@ const (
 	VarianceOverTolerance = "OVER_TOLERANCE"
 )
 
+// 积分流水来源
+const (
+	PointsSourceNormal        = "NORMAL"         // 正常入账
+	PointsSourceAutoReissue   = "AUTO_REISSUE"   // 系统延迟自动补发
+	PointsSourceManualReissue = "MANUAL_REISSUE" // 居民申诉人工补账
+)
+
+// 积分补发原因
+const (
+	ReissueReasonSystemDelay   = "SYSTEM_DELAY"   // 系统延迟(消费者故障/积压)
+	ReissueReasonResidentClaim = "RESIDENT_CLAIM" // 居民申诉
+)
+
+// 回收员待处理任务
+const (
+	TaskKindPointsSubmissionMissing = "POINTS_SUBMISSION_MISSING" // 回收员未提交积分结算
+	TaskStatusOpen                  = "OPEN"
+	TaskStatusSubmitted             = "SUBMITTED" // 回收员已补提交, 待核对
+	TaskStatusResolved              = "RESOLVED"
+	TaskStatusCancelled             = "CANCELLED" // 订单取消等, 任务终止
+	TaskImpactPending               = "PENDING"   // 未提交, 结算挂起
+	TaskImpactHeld                  = "HELD"      // 已提交, 收益冻结待核
+	TaskImpactReleased              = "RELEASED"  // 核对无误, 影响解除
+	TaskImpactCancelled             = "CANCELLED" // 任务作废, 不再影响结算
+)
+
+// 技术排查
+const (
+	IncidentKindCallbackFailBurst = "CALLBACK_FAIL_BURST"
+	IncidentStatusOpen            = "OPEN"
+	IncidentStatusResolved        = "RESOLVED"
+)
+
 // Kafka topics
 const (
 	TopicOrderEvents    = "recycle.order.events"
@@ -140,12 +173,12 @@ type Collector struct {
 }
 
 type Station struct {
-	ID      int64
-	UserID  int64
-	Name    string
-	Street  string
-	Lat     float64
-	Lng     float64
+	ID     int64
+	UserID int64
+	Name   string
+	Street string
+	Lat    float64
+	Lng    float64
 }
 
 type Order struct {
@@ -239,18 +272,21 @@ type PointsEntry struct {
 	BalanceAfter   int64     `json:"balance_after"`
 	Kind           string    `json:"kind"`
 	IdempotencyKey string    `json:"-"`
+	Source         string    `json:"source"`          // NORMAL|AUTO_REISSUE|MANUAL_REISSUE
+	ReissueReason  string    `json:"reissue_reason"`  // SYSTEM_DELAY|RESIDENT_CLAIM|""
+	OriginOrderNo  string    `json:"origin_order_no"` // 原订单编号
 	CreatedAt      time.Time `json:"created_at"`
 }
 
 type Certificate struct {
-	ID        int64     `json:"id"`
-	CertNo    string    `json:"cert_no"`
-	OrderID   int64     `json:"order_id"`
-	ResidentID int64    `json:"resident_id"`
-	Category  string    `json:"category"`
-	WeightG   int64     `json:"weight_g"`
-	CO2SavedG int64     `json:"co2_saved_g"`
-	IssuedAt  time.Time `json:"issued_at"`
+	ID         int64     `json:"id"`
+	CertNo     string    `json:"cert_no"`
+	OrderID    int64     `json:"order_id"`
+	ResidentID int64     `json:"resident_id"`
+	Category   string    `json:"category"`
+	WeightG    int64     `json:"weight_g"`
+	CO2SavedG  int64     `json:"co2_saved_g"`
+	IssuedAt   time.Time `json:"issued_at"`
 }
 
 type InboundRecord struct {
@@ -298,5 +334,56 @@ type CollectorEarning struct {
 	DistanceCents int64     `json:"distance_cents"`
 	PenaltyCents  int64     `json:"penalty_cents"`
 	TotalCents    int64     `json:"total_cents"`
+	Held          bool      `json:"held"`
+	HeldReason    string    `json:"held_reason"`
 	CreatedAt     time.Time `json:"created_at"`
+}
+
+// CollectorTask 回收员待处理任务(如: 完成上门后未提交积分结算)
+type CollectorTask struct {
+	ID               int64          `json:"id"`
+	TaskNo           string         `json:"task_no"`
+	CollectorID      int64          `json:"collector_id"`
+	OrderID          int64          `json:"order_id"`
+	ResidentID       int64          `json:"resident_id"`
+	Kind             string         `json:"kind"`
+	Status           string         `json:"status"`
+	SettlementImpact string         `json:"settlement_impact"`
+	Detail           map[string]any `json:"detail"`
+	CreatedAt        time.Time      `json:"created_at"`
+	SubmittedAt      *time.Time     `json:"submitted_at,omitempty"`
+	ResolvedAt       *time.Time     `json:"resolved_at,omitempty"`
+	Resolution       string         `json:"resolution"`
+}
+
+// CallbackFailure 消息回调失败明细
+type CallbackFailure struct {
+	ID         int64          `json:"id"`
+	Topic      string         `json:"topic"`
+	Consumer   string         `json:"consumer"`
+	MsgKey     string         `json:"msg_key"`
+	Attempt    int            `json:"attempt"`
+	ResidentID int64          `json:"resident_id"`
+	OrderID    int64          `json:"order_id"`
+	Reason     string         `json:"reason"`
+	Payload    map[string]any `json:"payload"`
+	CreatedAt  time.Time      `json:"created_at"`
+}
+
+// TechIncident 技术排查记录(回调频繁失败自动开单)
+type TechIncident struct {
+	ID                    int64          `json:"id"`
+	IncidentNo            string         `json:"incident_no"`
+	Kind                  string         `json:"kind"`
+	Topic                 string         `json:"topic"`
+	Consumer              string         `json:"consumer"`
+	Status                string         `json:"status"`
+	FailCount             int            `json:"fail_count"`
+	WindowSeconds         int            `json:"window_seconds"`
+	Threshold             int            `json:"threshold"`
+	AffectedResidentCount int            `json:"affected_resident_count"`
+	Detail                map[string]any `json:"detail"`
+	CreatedAt             time.Time      `json:"created_at"`
+	ResolvedAt            *time.Time     `json:"resolved_at,omitempty"`
+	Resolution            string         `json:"resolution"`
 }

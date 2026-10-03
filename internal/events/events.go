@@ -73,6 +73,18 @@ type Consumer struct {
 	name    string
 }
 
+type ctxKey string
+
+const attemptKey ctxKey = "attempt"
+
+// AttemptFromContext 取当前消息的处理尝试次数(首次=1)
+func AttemptFromContext(ctx context.Context) int {
+	if v, ok := ctx.Value(attemptKey).(int); ok && v > 0 {
+		return v
+	}
+	return 1
+}
+
 func NewConsumer(brokers []string, topic, group, name string,
 	handler func(ctx context.Context, key string, payload []byte) error) *Consumer {
 	return &Consumer{
@@ -101,10 +113,18 @@ func (c *Consumer) Run(ctx context.Context) {
 			time.Sleep(time.Second)
 			continue
 		}
-		if err := c.handler(ctx, string(m.Key), m.Value); err != nil {
-			log.Printf("[%s] handle key=%s: %v (will retry)", c.name, string(m.Key), err)
+		// 同一条消息重试时 attempt 累加, 提交后随下一条重置
+		for attempt := 1; ; attempt++ {
+			hctx := context.WithValue(ctx, attemptKey, attempt)
+			herr := c.handler(hctx, string(m.Key), m.Value)
+			if herr == nil {
+				break
+			}
+			log.Printf("[%s] handle key=%s attempt=%d: %v (will retry)", c.name, string(m.Key), attempt, herr)
 			time.Sleep(500 * time.Millisecond)
-			continue // 不提交 offset, 下轮重试
+			if ctx.Err() != nil {
+				return
+			}
 		}
 		if err := c.reader.CommitMessages(ctx, m); err != nil && ctx.Err() == nil {
 			log.Printf("[%s] commit: %v", c.name, err)
@@ -120,9 +140,12 @@ func (c *Consumer) Close() error { return c.reader.Close() }
 func PointsCommandHandler(s *svc.Service, paused func() bool) func(ctx context.Context, key string, payload []byte) error {
 	return func(ctx context.Context, key string, payload []byte) error {
 		if paused != nil && paused() {
-			// 测试注入: 暂停消费以模拟"积分不到账"
-			time.Sleep(2 * time.Second)
-			return errPaused
+			// 测试注入: 暂停消费以模拟"积分不到账"(回调失败, 计入技术排查)
+			err := errPaused
+			_ = s.RecordCallbackFailure(ctx, domain.TopicPointsCommands, "points-consumer", key, payload,
+				AttemptFromContext(ctx), err.Error())
+			time.Sleep(500 * time.Millisecond)
+			return err
 		}
 		var cmd struct {
 			Command      string `json:"command"`
@@ -134,7 +157,12 @@ func PointsCommandHandler(s *svc.Service, paused func() bool) func(ctx context.C
 		if cmd.Command != "credit" || cmd.SettlementID == 0 {
 			return nil
 		}
-		return s.CreditPointsFromCommand(ctx, cmd.SettlementID)
+		if err := s.CreditPointsFromCommand(ctx, cmd.SettlementID); err != nil {
+			_ = s.RecordCallbackFailure(ctx, domain.TopicPointsCommands, "points-consumer", key, payload,
+				AttemptFromContext(ctx), err.Error())
+			return err
+		}
+		return nil
 	}
 }
 
@@ -145,7 +173,8 @@ type pausedError struct{}
 func (e *pausedError) Error() string { return "points consumer paused (test injection)" }
 
 // NotificationHandler 通知落库
-func NotificationHandler(st *store.Store) func(ctx context.Context, key string, payload []byte) error {
+// failAttempts: 测试注入, 返回 >0 时每条消息前 N 次处理强制失败(模拟回调频繁失败, 之后恢复成功)
+func NotificationHandler(s *svc.Service, failAttempts func() int) func(ctx context.Context, key string, payload []byte) error {
 	return func(ctx context.Context, key string, payload []byte) error {
 		var n struct {
 			UserID  int64  `json:"user_id"`
@@ -155,15 +184,39 @@ func NotificationHandler(st *store.Store) func(ctx context.Context, key string, 
 		if err := json.Unmarshal(payload, &n); err != nil || n.UserID == 0 {
 			return nil
 		}
-		return st.InTx(ctx, func(tx pgx.Tx) error {
+		attempt := AttemptFromContext(ctx)
+		if max := func() int {
+			if failAttempts == nil {
+				return 0
+			}
+			return failAttempts()
+		}(); max > 0 && attempt <= max {
+			err := errNotifyPaused
+			_ = s.RecordCallbackFailure(ctx, domain.TopicNotifications, "notification-consumer", key, payload,
+				attempt, err.Error())
+			time.Sleep(200 * time.Millisecond)
+			return err
+		}
+		err := s.Store.InTx(ctx, func(tx pgx.Tx) error {
 			first, err := store.TryMarkProcessed(ctx, tx, "notification", key+":"+n.Kind+":"+n.Content)
 			if err != nil || !first {
 				return err
 			}
 			return store.AddNotification(ctx, tx, n.UserID, n.Kind, n.Content)
 		})
+		if err != nil {
+			_ = s.RecordCallbackFailure(ctx, domain.TopicNotifications, "notification-consumer", key, payload,
+				attempt, err.Error())
+		}
+		return err
 	}
 }
+
+var errNotifyPaused = &notifyPausedError{}
+
+type notifyPausedError struct{}
+
+func (e *notifyPausedError) Error() string { return "notification consumer paused (test injection)" }
 
 // StatsHandler 街道统计聚合: 订单完成时按品类累计重量/金额/积分
 func StatsHandler(st *store.Store) func(ctx context.Context, key string, payload []byte) error {

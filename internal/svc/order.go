@@ -12,20 +12,20 @@ import (
 
 // CreateOrderItem 预约提交的品类行
 type CreateOrderItem struct {
-	Category   string  `json:"category"`
+	Category    string  `json:"category"`
 	EstWeightKg float64 `json:"est_weight_kg"`
 }
 
 type CreateOrderReq struct {
-	Items           []CreateOrderItem
-	Address         string
-	Lat, Lng        float64
-	Floor           int
-	HasElevator     bool
-	WindowStart     time.Time
-	WindowEnd       time.Time
-	Photos          []string
-	IdempotencyKey  string
+	Items          []CreateOrderItem
+	Address        string
+	Lat, Lng       float64
+	Floor          int
+	HasElevator    bool
+	WindowStart    time.Time
+	WindowEnd      time.Time
+	Photos         []string
+	IdempotencyKey string
 }
 
 // CreateOrder 居民提交回收预约: 校验 -> 市场价快照 -> 预估价 -> 落库 -> 触发派单

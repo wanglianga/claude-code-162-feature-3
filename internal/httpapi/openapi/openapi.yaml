@@ -1,0 +1,880 @@
+openapi: 3.0.3
+info:
+  title: 区域再生资源回收服务 API
+  version: "1.0"
+  description: >
+    面向居民、回收员、回收站、街道四方的再生资源回收平台。
+
+
+    覆盖 预约→派单→上门核验→称重定价→现金/积分结算→站点复称→环保凭证 全链路，
+
+
+    以及积分到账异常处理：居民账号/回收员提交/积分规则/消息回调四方核对、
+    系统延迟自动补发、回收员未提交待处理任务与结算冻结、回调频繁失败技术排查与受影响居民名单。
+
+
+    ## 鉴权
+
+    所有 `/api/v1/**` 接口使用 Bearer Token（测试账号的 token 即身份）。
+servers:
+  - url: http://127.0.0.1:8080
+    description: 本地开发
+
+tags:
+  - name: public
+    description: 公共（需登录）
+  - name: resident
+    description: 居民
+  - name: points
+    description: 积分与积分异常
+  - name: collector
+    description: 回收员
+  - name: station
+    description: 回收站
+  - name: street
+    description: 街道/运营
+
+security:
+  - bearerAuth: []
+
+paths:
+  /healthz:
+    get:
+      tags: [public]
+      security: []
+      summary: 健康检查
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /api/v1/me:
+    get:
+      tags: [public]
+      summary: 当前登录账号
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+  /api/v1/prices:
+    get:
+      tags: [public]
+      summary: 当前生效市场行情
+      responses:
+        "200": { description: OK }
+  /api/v1/notifications:
+    get:
+      tags: [public]
+      summary: 我的通知（含积分补发/排查通知）
+      responses:
+        "200": { description: OK }
+
+  /api/v1/orders:
+    get:
+      tags: [resident]
+      summary: 我的预约单
+      responses:
+        "200": { description: OK }
+    post:
+      tags: [resident]
+      summary: 创建预约（幂等）
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items, time_window_start, time_window_end]
+              properties:
+                items:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      category: { type: string, example: clothing }
+                      est_weight_kg: { type: number, example: 6 }
+                address: { type: string }
+                lat: { type: number }
+                lng: { type: number }
+                floor: { type: integer }
+                has_elevator: { type: boolean }
+                time_window_start: { type: string, format: date-time }
+                time_window_end: { type: string, format: date-time }
+                photos:
+                  type: array
+                  items: { type: string }
+                idempotency_key: { type: string, example: e2e-order-7 }
+      responses:
+        "201": { description: 创建成功 }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/v1/orders/{id}:
+    get:
+      tags: [public]
+      summary: 订单详情（仅相关方可见）
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: OK }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/orders/{id}/trace:
+    get:
+      tags: [public]
+      summary: 全链路追踪（谁确认/何时确认/对结算的影响）
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: OK }
+
+  /api/v1/orders/{id}/cancel:
+    post:
+      tags: [resident]
+      summary: 取消预约
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        "200": { description: OK }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /api/v1/orders/{id}/confirm:
+    post:
+      tags: [resident]
+      summary: 居民本人确认称重与价格
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: OK }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /api/v1/orders/{id}/disputes:
+    post:
+      tags: [resident]
+      summary: 提出称重/价格争议（订单冻结）
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [detail]
+              properties:
+                kind: { type: string, enum: [WEIGHT, CATEGORY, CONTAMINATION, PRICE], default: WEIGHT }
+                detail: { type: string }
+                item_id: { type: integer, format: int64 }
+      responses:
+        "201": { description: OK }
+
+  /api/v1/orders/{id}/complaints:
+    post:
+      tags: [public]
+      summary: 投诉（相关方均可）
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string }
+      responses:
+        "201": { description: OK }
+
+  /api/v1/points/balance:
+    get:
+      tags: [points]
+      summary: 积分余额与流水（流水含补发来源/原订单编号）
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PointsBalance"
+
+  /api/v1/points/claims:
+    get:
+      tags: [points]
+      summary: 我的积分申诉记录
+      responses:
+        "200": { description: OK }
+    post:
+      tags: [points]
+      summary: 积分不到账申诉（同步对账补账，幂等）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id]
+              properties:
+                order_id: { type: integer, format: int64 }
+                note: { type: string }
+      responses:
+        "200":
+          description: 对账结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimResult"
+
+  /api/v1/points/reconcile:
+    post:
+      tags: [points]
+      summary: >
+        报告积分未到账并触发四方核对。系统延迟（有 PENDING 积分结算单但无流水）立即自动补发；
+        回收员未提交（CONFIRMED 无结算单）生成待处理任务并影响其结算；已入账返回流水明细。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id]
+              properties:
+                order_id: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: 对账处置结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconcileResult"
+
+  /api/v1/points/reissues:
+    get:
+      tags: [points]
+      summary: 补发记录（补发来源 / 到账时间 / 原订单编号）
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reissues:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Reissue"
+
+  /api/v1/certificates:
+    get:
+      tags: [resident]
+      summary: 我的环保凭证
+      responses:
+        "200": { description: OK }
+
+  /api/v1/collector/duty:
+    post:
+      tags: [collector]
+      summary: 上下班并上报位置
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                on_duty: { type: boolean }
+                lat: { type: number }
+                lng: { type: number }
+      responses:
+        "200": { description: OK }
+
+  /api/v1/collector/orders:
+    get:
+      tags: [collector]
+      summary: 在途订单路线
+      responses:
+        "200": { description: OK }
+
+  /api/v1/collector/orders/{id}/accept:
+    post:
+      tags: [collector]
+      summary: 接单
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: OK }
+  /api/v1/collector/orders/{id}/start:
+    post:
+      tags: [collector]
+      summary: 出发
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: OK }
+  /api/v1/collector/orders/{id}/arrive:
+    post:
+      tags: [collector]
+      summary: 到达（迟到自动记录）
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: OK }
+  /api/v1/collector/orders/{id}/verify-resident:
+    post:
+      tags: [collector]
+      summary: 核验居民（SCAN_CODE 核验码 / ASSISTED 协助老人，强制备注）
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [method]
+              properties:
+                method: { type: string, enum: [SCAN_CODE, ASSISTED] }
+                verify_code: { type: string }
+                assisted_note: { type: string }
+      responses:
+        "200": { description: OK }
+        "400": { $ref: "#/components/responses/Error" }
+  /api/v1/collector/orders/{id}/items:
+    post:
+      tags: [collector]
+      summary: 现场临时加品类
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                category: { type: string }
+                est_weight_kg: { type: number }
+      responses:
+        "201": { description: OK }
+  /api/v1/collector/orders/{id}/weigh:
+    post:
+      tags: [collector]
+      summary: 现场称重定价（逐品类，可扣杂）
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [weights]
+              properties:
+                weights:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      category: { type: string }
+                      weight_kg: { type: number }
+                      contamination_pm: { type: integer, description: 扣杂千分比 }
+                photos:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200": { description: OK }
+  /api/v1/collector/orders/{id}/confirm-assisted:
+    post:
+      tags: [collector]
+      summary: 协助老人确认称重（仅老人，强制备注）
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assisted_note]
+              properties:
+                assisted_note: { type: string }
+      responses:
+        "200": { description: OK }
+        "400": { $ref: "#/components/responses/Error" }
+  /api/v1/collector/orders/{id}/settle:
+    post:
+      tags: [collector]
+      summary: 结算（cash 同步 / points 经 Kafka 异步入账）
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type: { type: string, enum: [cash, points] }
+                simulate_fail: { type: boolean, description: 测试注入：模拟现金失败 }
+      responses:
+        "200": { description: OK }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/collector/orders/{id}/settle/retry:
+    post:
+      tags: [collector]
+      summary: 现金支付失败重试
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                simulate_fail: { type: boolean }
+      responses:
+        "200": { description: OK }
+  /api/v1/collector/orders/{id}/deliver:
+    post:
+      tags: [collector]
+      summary: 送达回收站
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: OK }
+
+  /api/v1/collector/earnings:
+    get:
+      tags: [collector]
+      summary: 我的收益（held=true 的冻结收益不计入可发放合计）
+      responses:
+        "200": { description: OK }
+
+  /api/v1/collector/tasks:
+    get:
+      tags: [collector]
+      summary: 我的待处理任务（如未提交积分结算）
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string, enum: [OPEN, SUBMITTED, RESOLVED, CANCELLED] }
+      responses:
+        "200": { description: OK }
+
+  /api/v1/collector/tasks/{id}/submit:
+    post:
+      tags: [collector]
+      summary: 按任务补提交结算（提交后任务转 SUBMITTED，本单收益冻结待运营核对）
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type: { type: string, enum: [cash, points], default: points }
+      responses:
+        "200": { description: OK }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /api/v1/station/inbound/{orderId}/reweigh:
+    post:
+      tags: [station]
+      summary: 站点二次复称（超差扣罚收益/调整积分，开具环保凭证，订单完结）
+      parameters:
+        - in: path
+          name: orderId
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [weights]
+              properties:
+                weights:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      category: { type: string }
+                      weight_kg: { type: number }
+      responses:
+        "200": { description: OK }
+        "403": { $ref: "#/components/responses/Error" }
+  /api/v1/station/inbound:
+    get:
+      tags: [station]
+      summary: 待入库列表
+      responses:
+        "200": { description: OK }
+  /api/v1/station/quality:
+    get:
+      tags: [station]
+      summary: 入库质量统计
+      responses:
+        "200": { description: OK }
+
+  /api/v1/street/stats:
+    get:
+      tags: [street]
+      summary: 街道分品类统计
+      parameters:
+        - in: query
+          name: street
+          schema: { type: string }
+      responses:
+        "200": { description: OK }
+  /api/v1/street/flows:
+    get:
+      tags: [street]
+      summary: 资源流向
+      parameters:
+        - in: query
+          name: street
+          schema: { type: string }
+      responses:
+        "200": { description: OK }
+  /api/v1/street/disputes:
+    get:
+      tags: [street]
+      summary: 争议列表
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string }
+      responses:
+        "200": { description: OK }
+  /api/v1/street/disputes/{id}/resolve:
+    post:
+      tags: [street]
+      summary: 裁决争议（adjust/confirm/reject）
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action: { type: string, enum: [adjust, confirm, reject] }
+                note: { type: string }
+                adjusted_weights:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      category: { type: string }
+                      weight_kg: { type: number }
+                      contamination_pm: { type: integer }
+      responses:
+        "200": { description: OK }
+  /api/v1/street/complaints:
+    get:
+      tags: [street]
+      summary: 投诉列表
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string }
+      responses:
+        "200": { description: OK }
+  /api/v1/street/complaints/{id}/resolve:
+    post:
+      tags: [street]
+      summary: 处理投诉
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resolution: { type: string }
+      responses:
+        "200": { description: OK }
+  /api/v1/street/prices:
+    post:
+      tags: [street]
+      summary: 更新市场价（版本化，老订单快照不变）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                category: { type: string }
+                price_yuan_per_kg: { type: number }
+      responses:
+        "200": { description: OK }
+
+  /api/v1/street/collector-tasks:
+    get:
+      tags: [street]
+      summary: 全部回收员待处理任务
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string, enum: [OPEN, SUBMITTED, RESOLVED, CANCELLED] }
+      responses:
+        "200": { description: OK }
+  /api/v1/street/collector-tasks/{id}/resolve:
+    post:
+      tags: [street]
+      summary: 核对任务（release 解冻收益并结案 / cancel 作废）
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, resolution]
+              properties:
+                action: { type: string, enum: [release, cancel] }
+                resolution: { type: string }
+      responses:
+        "200": { description: OK }
+
+  /api/v1/street/tech-incidents:
+    get:
+      tags: [street]
+      summary: 技术排查记录（回调频繁失败自动开单）
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string, enum: [OPEN, RESOLVED] }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  incidents:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Incident"
+  /api/v1/street/tech-incidents/{id}/residents:
+    get:
+      tags: [street]
+      summary: 受影响居民名单（集中解释用，含账号/姓名/电话/原订单号/失败次数）
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  incident_id: { type: integer, format: int64 }
+                  residents:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/IncidentResident"
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/street/tech-incidents/{id}/resolve:
+    post:
+      tags: [street]
+      summary: 关闭技术排查记录
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resolution]
+              properties:
+                resolution: { type: string }
+      responses:
+        "200": { description: OK }
+  /api/v1/street/callback-failures:
+    get:
+      tags: [street]
+      summary: 消息回调失败明细
+      parameters:
+        - in: query
+          name: consumer
+          schema: { type: string }
+      responses:
+        "200": { description: OK }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    Id:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: integer
+        format: int64
+  responses:
+    Error:
+      description: 业务错误
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Health:
+      type: object
+      properties:
+        status: { type: string, example: ok }
+    Me:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        account: { type: string }
+        name: { type: string }
+        role: { type: string, enum: [resident, collector, station, street] }
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    PointsBalance:
+      type: object
+      properties:
+        balance: { type: integer, format: int64 }
+        entries:
+          type: array
+          items:
+            allOf:
+              - $ref: "#/components/schemas/Reissue"
+              - type: object
+                properties:
+                  balance_after: { type: integer, format: int64 }
+                  kind: { type: string }
+    Reissue:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        delta: { type: integer, format: int64, example: 53 }
+        balance_after: { type: integer, format: int64 }
+        kind: { type: string, example: RECYCLE_CREDIT }
+        source:
+          type: string
+          enum: [NORMAL, AUTO_REISSUE, MANUAL_REISSUE]
+          description: 补发来源（正常 / 系统延迟自动补发 / 申诉核对补发）
+        source_label: { type: string, example: 系统延迟自动补发 }
+        reissue_reason:
+          type: string
+          enum: ["", SYSTEM_DELAY, RESIDENT_CLAIM]
+        origin_order_no:
+          type: string
+          description: 原订单编号
+          example: RC20261002-382107
+        order_id: { type: integer, format: int64 }
+        credited_at:
+          type: string
+          format: date-time
+          description: 到账时间
+    ClaimResult:
+      type: object
+      properties:
+        claim_id: { type: integer, format: int64 }
+        status: { type: string, enum: [RESOLVED_CREDITED, ALREADY_CREDITED] }
+        credited: { type: integer, format: int64 }
+        balance: { type: integer, format: int64 }
+        message: { type: string }
+    ReconcileResult:
+      type: object
+      properties:
+        order_id: { type: integer, format: int64 }
+        order_no: { type: string }
+        outcome:
+          type: string
+          enum: [AUTO_REISSUED, TASK_OPENED, ALREADY_CREDITED, WAITING_COLLECTOR, NOT_POINTS_ORDER]
+        message: { type: string }
+        task_id: { type: integer, format: int64 }
+        entry: { $ref: "#/components/schemas/Reissue" }
+        checks:
+          type: object
+          properties:
+            resident_account_ok: { type: boolean }
+            collector_submitted: { type: boolean }
+            settlement_status: { type: string, enum: [PENDING, SUCCESS, FAILED] }
+            rule:
+              type: object
+              properties:
+                amount_cents: { type: integer, format: int64 }
+                points_per_yuan: { type: integer, format: int64 }
+                bonus_pm: { type: integer, format: int64 }
+                expected_points: { type: integer, format: int64 }
+                settlement_points: { type: integer, format: int64 }
+                match: { type: boolean }
+            callback:
+              type: object
+              properties:
+                failures: { type: integer }
+                incident_id: { type: integer, format: int64 }
+    Incident:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        incident_no: { type: string }
+        kind: { type: string, example: CALLBACK_FAIL_BURST }
+        topic: { type: string }
+        consumer: { type: string, example: notification-consumer }
+        status: { type: string, enum: [OPEN, RESOLVED] }
+        fail_count: { type: integer }
+        window_seconds: { type: integer }
+        threshold: { type: integer }
+        affected_resident_count: { type: integer }
+        created_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time, nullable: true }
+        resolution: { type: string }
+    IncidentResident:
+      type: object
+      properties:
+        resident_id: { type: integer, format: int64 }
+        account: { type: string, example: resident2 }
+        name: { type: string, example: 王大爷 }
+        phone: { type: string }
+        order_id: { type: integer, format: int64 }
+        order_no: { type: string, example: RC20261002-877805 }
+        fail_count: { type: integer }
+        last_fail_at: { type: string, format: date-time }

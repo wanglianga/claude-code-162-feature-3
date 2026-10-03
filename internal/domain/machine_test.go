@@ -17,14 +17,14 @@ func TestStateMachineHappyPath(t *testing.T) {
 
 func TestStateMachineIllegal(t *testing.T) {
 	cases := [][2]string{
-		{StatusPending, StatusWeighed},        // 跳级
-		{StatusPending, StatusSettled},        // 跳级
-		{StatusCompleted, StatusCancelled},    // 终态不可取消
-		{StatusCancelled, StatusAssigned},     // 取消后不可复活
-		{StatusWeighed, StatusSettled},        // 未确认不可结算
-		{StatusConfirmed, StatusWeighed},      // 确认后不可回退称重
-		{StatusDelivered, StatusSettled},      // 不可逆
-		{StatusArrived, StatusWeighed},        // 未核验居民不可称重
+		{StatusPending, StatusWeighed},     // 跳级
+		{StatusPending, StatusSettled},     // 跳级
+		{StatusCompleted, StatusCancelled}, // 终态不可取消
+		{StatusCancelled, StatusAssigned},  // 取消后不可复活
+		{StatusWeighed, StatusSettled},     // 未确认不可结算
+		{StatusConfirmed, StatusWeighed},   // 确认后不可回退称重
+		{StatusDelivered, StatusSettled},   // 不可逆
+		{StatusArrived, StatusWeighed},     // 未核验居民不可称重
 	}
 	for _, c := range cases {
 		if err := MustTransit(c[0], c[1]); err == nil {

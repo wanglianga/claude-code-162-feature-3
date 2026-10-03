@@ -114,6 +114,10 @@ func (s *Server) Router() http.Handler {
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, 200, map[string]string{"status": "ok"})
 	})
+	// OpenAPI 3.x 规范与可运行 Swagger UI(纯后端服务接口文档)
+	r.Get("/openapi.yaml", s.openapiSpec)
+	r.Get("/docs", s.swaggerUI)
+	r.Get("/swagger", s.swaggerUI)
 	r.Route("/api/v1", func(r chi.Router) {
 		r.With(s.auth).Get("/me", s.handleMe)
 		r.With(s.auth).Get("/prices", s.handlePrices)
@@ -131,6 +135,8 @@ func (s *Server) Router() http.Handler {
 		r.With(s.auth).Get("/points/balance", requireRole(domain.RoleResident, s.handlePointsBalance))
 		r.With(s.auth).Post("/points/claims", requireRole(domain.RoleResident, s.handlePointsClaim))
 		r.With(s.auth).Get("/points/claims", requireRole(domain.RoleResident, s.handlePointsClaims))
+		r.With(s.auth).Post("/points/reconcile", requireRole(domain.RoleResident, s.handlePointsReconcile))
+		r.With(s.auth).Get("/points/reissues", requireRole(domain.RoleResident, s.handlePointsReissues))
 		r.With(s.auth).Get("/certificates", requireRole(domain.RoleResident, s.handleMyCertificates))
 
 		// 回收员
@@ -147,6 +153,8 @@ func (s *Server) Router() http.Handler {
 		r.With(s.auth).Post("/collector/orders/{id}/settle/retry", requireRole(domain.RoleCollector, s.handleSettleRetry))
 		r.With(s.auth).Post("/collector/orders/{id}/deliver", requireRole(domain.RoleCollector, s.handleDeliver))
 		r.With(s.auth).Get("/collector/earnings", requireRole(domain.RoleCollector, s.handleEarnings))
+		r.With(s.auth).Get("/collector/tasks", requireRole(domain.RoleCollector, s.handleCollectorTasks))
+		r.With(s.auth).Post("/collector/tasks/{id}/submit", requireRole(domain.RoleCollector, s.handleCollectorTaskSubmit))
 
 		// 站点
 		r.With(s.auth).Post("/station/inbound/{orderId}/reweigh", requireRole(domain.RoleStation, s.handleReweigh))
@@ -161,6 +169,14 @@ func (s *Server) Router() http.Handler {
 		r.With(s.auth).Get("/street/complaints", requireRole(domain.RoleStreet, s.handleListComplaints))
 		r.With(s.auth).Post("/street/complaints/{id}/resolve", requireRole(domain.RoleStreet, s.handleResolveComplaint))
 		r.With(s.auth).Post("/street/prices", requireRole(domain.RoleStreet, s.handleUpdatePrice))
+
+		// 运营: 积分异常(回收员待处理任务/技术排查/受影响居民名单/回调失败明细)
+		r.With(s.auth).Get("/street/collector-tasks", requireRole(domain.RoleStreet, s.handleStreetCollectorTasks))
+		r.With(s.auth).Post("/street/collector-tasks/{id}/resolve", requireRole(domain.RoleStreet, s.handleStreetResolveCollectorTask))
+		r.With(s.auth).Get("/street/tech-incidents", requireRole(domain.RoleStreet, s.handleStreetTechIncidents))
+		r.With(s.auth).Get("/street/tech-incidents/{id}/residents", requireRole(domain.RoleStreet, s.handleStreetIncidentResidents))
+		r.With(s.auth).Post("/street/tech-incidents/{id}/resolve", requireRole(domain.RoleStreet, s.handleStreetResolveIncident))
+		r.With(s.auth).Get("/street/callback-failures", requireRole(domain.RoleStreet, s.handleStreetCallbackFailures))
 	})
 	return r
 }

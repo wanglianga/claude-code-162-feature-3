@@ -187,7 +187,7 @@ func (s *Server) handleSettle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Type         string `json:"type"` // cash | points
+		Type         string `json:"type"`          // cash | points
 		SimulateFail bool   `json:"simulate_fail"` // 测试注入: 模拟现金支付失败
 	}
 	if err := decode(r, &req); err != nil {
@@ -231,13 +231,16 @@ func (s *Server) handleEarnings(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	var total int64
 	for _, e := range list {
-		total += e.TotalCents
 		out = append(out, map[string]any{
 			"order_id": e.OrderID, "base_yuan": domain.CentsToYuan(e.BaseCents),
 			"weight_yuan": domain.CentsToYuan(e.WeightCents), "floor_yuan": domain.CentsToYuan(e.FloorCents),
 			"distance_yuan": domain.CentsToYuan(e.DistanceCents), "penalty_yuan": domain.CentsToYuan(e.PenaltyCents),
-			"total_yuan": domain.CentsToYuan(e.TotalCents), "created_at": e.CreatedAt,
+			"total_yuan": domain.CentsToYuan(e.TotalCents),
+			"held":       e.Held, "held_reason": e.HeldReason, "created_at": e.CreatedAt,
 		})
+		if !e.Held {
+			total += e.TotalCents // 冻结收益不计入可发放合计
+		}
 	}
 	writeJSON(w, 200, map[string]any{"earnings": out, "total_yuan": domain.CentsToYuan(total)})
 }
